@@ -9,7 +9,11 @@ import { reverseBytes, toHex } from "./util.js";
 
 export const MAX_MONEY = 21_000_000n * 100_000_000n;
 
-const SIGHASH_TAG = new TextEncoder().encode("ScarletCoin/sighash/1");
+export const OUTPUT_P2PKH = 0;
+export const OUTPUT_P2SH = 1;
+export const SEQUENCE_FINAL = 0xffffffff;
+
+const SIGHASH_TAG = new TextEncoder().encode("ScarletCoin/sighash/2");
 
 export interface OutPoint {
   /** Transaction id in internal (little-endian) byte order. */
@@ -18,14 +22,19 @@ export interface OutPoint {
 }
 
 export interface TxOutput {
+  /** 0 = P2PKH, 1 = P2SH. */
+  type: number;
   value: bigint;
+  /** 20-byte public-key hash (P2PKH) or script hash (P2SH). */
   pubkeyHash: Uint8Array;
 }
 
 export interface TxInput {
   prevout: OutPoint;
-  publicKey: Uint8Array;
-  signature: Uint8Array;
+  /** 0xffffffff by default; lower values signal replace-by-fee. */
+  sequence: number;
+  /** The witness stack: [public key, signature] for a P2PKH input. */
+  witness: Uint8Array[];
 }
 
 export interface Transaction {
@@ -36,16 +45,23 @@ export interface Transaction {
   coinbaseData: Uint8Array;
 }
 
+export function p2pkhScriptCode(pubkeyHash: Uint8Array): Uint8Array {
+  const result = new Uint8Array(1 + pubkeyHash.length);
+  result[0] = OUTPUT_P2PKH;
+  result.set(pubkeyHash, 1);
+  return result;
+}
+
 export function serializeBody(tx: Transaction): Uint8Array {
   const writer = new Writer();
   writer.uint32(tx.version);
   writer.varint(tx.inputs.length);
   for (const input of tx.inputs) {
-    writer.hash32(input.prevout.txid).uint32(input.prevout.index);
+    writer.hash32(input.prevout.txid).uint32(input.prevout.index).uint32(input.sequence);
   }
   writer.varint(tx.outputs.length);
   for (const output of tx.outputs) {
-    writer.uint64(output.value).raw(output.pubkeyHash);
+    writer.uint8(output.type).uint64(output.value).raw(output.pubkeyHash);
   }
   writer.uint32(tx.lockTime);
   writer.varbytes(tx.coinbaseData);
@@ -56,7 +72,10 @@ export function serialize(tx: Transaction): Uint8Array {
   const writer = new Writer();
   writer.raw(serializeBody(tx));
   for (const input of tx.inputs) {
-    writer.varbytes(input.publicKey).varbytes(input.signature);
+    writer.varint(input.witness.length);
+    for (const item of input.witness) {
+      writer.varbytes(item);
+    }
   }
   return writer.getvalue();
 }
@@ -75,6 +94,7 @@ export function signatureHash(
   tx: Transaction,
   inputIndex: number,
   prevoutValue: bigint,
+  scriptCode: Uint8Array,
 ): Uint8Array {
   if (inputIndex < 0 || inputIndex >= tx.inputs.length) {
     throw new Error(`no input at index ${inputIndex}`);
@@ -84,6 +104,7 @@ export function signatureHash(
   writer.raw(serializeBody(tx));
   writer.uint32(inputIndex);
   writer.uint64(prevoutValue);
+  writer.varbytes(scriptCode);
   return hash256(writer.getvalue());
 }
 

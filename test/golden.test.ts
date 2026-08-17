@@ -9,7 +9,7 @@ import {
   verifySignature,
 } from "../src/lib/keys.js";
 import { buildSweepTransaction, buildTransaction } from "../src/lib/builder.js";
-import { serializeBody, signatureHash, txidHex } from "../src/lib/transaction.js";
+import { serializeBody, signatureHash, txidHex, p2pkhScriptCode } from "../src/lib/transaction.js";
 import { COIN } from "../src/lib/params.js";
 import { fromHex, toHex } from "../src/lib/util.js";
 import goldenData from "./fixtures/golden.json";
@@ -25,8 +25,8 @@ function expectVerifiable(built: any): void {
   for (let i = 0; i < built.coins.length; i++) {
     const coin = built.coins[i];
     const input = built.transaction.inputs[i];
-    const digest = signatureHash(built.transaction, i, coin.value);
-    expect(verifySignature(digest, input.signature, input.publicKey)).toBe(true);
+    const digest = signatureHash(built.transaction, i, coin.value, p2pkhScriptCode(coin.pubkeyHash));
+    expect(verifySignature(digest, input.witness[1], input.witness[0])).toBe(true);
   }
 }
 

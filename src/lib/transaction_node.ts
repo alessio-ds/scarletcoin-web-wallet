@@ -1,6 +1,6 @@
 import { hash256 } from "./hashing.js";
 import { Writer } from "./serialize.js";
-import type { Transaction } from "./transaction.js";
+import { OUTPUT_P2PKH, SEQUENCE_FINAL, type Transaction } from "./transaction.js";
 
 export function encodeCoinbaseData(height: number, extra: Uint8Array = new Uint8Array(0)): Uint8Array {
   const result = new Uint8Array(4 + extra.length);
@@ -21,11 +21,11 @@ export function buildCoinbase(
     inputs: [
       {
         prevout: { txid: new Uint8Array(32), index: 0xffffffff },
-        publicKey: new Uint8Array(0),
-        signature: new Uint8Array(0),
+        sequence: SEQUENCE_FINAL,
+        witness: [],
       },
     ],
-    outputs: [{ value: reward, pubkeyHash }],
+    outputs: [{ type: OUTPUT_P2PKH, value: reward, pubkeyHash }],
     lockTime: 0,
     coinbaseData: encodeCoinbaseData(height, extra),
   };
@@ -51,10 +51,10 @@ export function computeTxidFromSerialized(serialized: Uint8Array): Uint8Array {
   let offset = 4;
   const inputCount = readVarint(serialized, offset);
   offset += inputCount.bytesRead;
-  offset += inputCount.value * 36;
+  offset += inputCount.value * 40; // outpoint (36) + sequence (4)
   const outputCount = readVarint(serialized, offset);
   offset += outputCount.bytesRead;
-  offset += outputCount.value * 28;
+  offset += outputCount.value * 29; // type (1) + value (8) + hash (20)
   offset += 4;
   const coinbaseLen = readVarint(serialized, offset);
   offset += coinbaseLen.bytesRead;

@@ -4,6 +4,9 @@
  */
 import { derivePublicKey, sign } from "./keys.js";
 import {
+  OUTPUT_P2PKH,
+  SEQUENCE_FINAL,
+  p2pkhScriptCode,
   type OutPoint,
   type Transaction,
   type TxInput,
@@ -13,8 +16,8 @@ import {
 } from "./transaction.js";
 import { toHex } from "./util.js";
 
-export const PER_INPUT_BYTES = 135;
-export const PER_OUTPUT_BYTES = 28;
+export const PER_INPUT_BYTES = 140;
+export const PER_OUTPUT_BYTES = 29;
 export const BASE_BYTES = 11;
 
 export interface Coin {
@@ -106,11 +109,11 @@ function signInputs(
   const inputs = unsigned.inputs.map((input, index) => {
     const coin = coins[index]!;
     const key = findKey(keys, coin.pubkeyHash);
-    const digest = signatureHash(unsigned, index, coin.value);
+    const digest = signatureHash(unsigned, index, coin.value, p2pkhScriptCode(coin.pubkeyHash));
     return {
       prevout: input.prevout,
-      publicKey: derivePublicKey(key),
-      signature: sign(digest, key),
+      sequence: input.sequence,
+      witness: [derivePublicKey(key), sign(digest, key)],
     } satisfies TxInput;
   });
   return { ...unsigned, inputs };
@@ -136,10 +139,10 @@ export function buildSweepTransaction(params: {
     version: 1,
     inputs: spendableCoins.map((coin) => ({
       prevout: coin.outpoint,
-      publicKey: new Uint8Array(0),
-      signature: new Uint8Array(0),
+      sequence: SEQUENCE_FINAL,
+      witness: [],
     })),
-    outputs: [{ value: amount, pubkeyHash }],
+    outputs: [{ type: OUTPUT_P2PKH, value: amount, pubkeyHash }],
     lockTime,
     coinbaseData: new Uint8Array(0),
   };
@@ -178,11 +181,12 @@ export function buildTransaction(params: {
   if (change < 0n) throw new InsufficientFundsError("selected coins do not cover the fee");
 
   const txOutputs: TxOutput[] = targets.map((target) => ({
+    type: OUTPUT_P2PKH,
     value: target.value,
     pubkeyHash: target.hash,
   }));
   if (change > dustThreshold(feePerKb)) {
-    txOutputs.push({ value: change, pubkeyHash: changeHash });
+    txOutputs.push({ type: OUTPUT_P2PKH, value: change, pubkeyHash: changeHash });
   } else {
     // Too small to be worth its own output: leave it to the miner as extra fee.
     fee += change;
@@ -193,8 +197,8 @@ export function buildTransaction(params: {
     version: 1,
     inputs: chosen.map((coin) => ({
       prevout: coin.outpoint,
-      publicKey: new Uint8Array(0),
-      signature: new Uint8Array(0),
+      sequence: SEQUENCE_FINAL,
+      witness: [],
     })),
     outputs: txOutputs,
     lockTime,

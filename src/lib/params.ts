@@ -8,6 +8,7 @@ export const MAX_MONEY = 21_000_000n * COIN;
 export interface ChainParams {
   name: string;
   addressVersion: number;
+  scriptAddressVersion: number;
   wifVersion: number;
   defaultRpcPort: number;
   minRelayFeePerKb: number;
@@ -16,7 +17,8 @@ export interface ChainParams {
 
 export const MAINNET: ChainParams = {
   name: "mainnet",
-  addressVersion: 63, // addresses start with "S"
+  addressVersion: 63, // P2PKH addresses start with "S"
+  scriptAddressVersion: 50, // P2SH addresses start with "M"
   wifVersion: 191,
   defaultRpcPort: 20332,
   minRelayFeePerKb: 1000,
@@ -26,6 +28,7 @@ export const MAINNET: ChainParams = {
 export const TESTNET: ChainParams = {
   name: "testnet",
   addressVersion: 127, // addresses start with "t"
+  scriptAddressVersion: 65, // P2SH addresses start with "T"
   wifVersion: 239,
   defaultRpcPort: 30332,
   minRelayFeePerKb: 1000,
@@ -35,6 +38,7 @@ export const TESTNET: ChainParams = {
 export const REGTEST: ChainParams = {
   name: "regtest",
   addressVersion: 127,
+  scriptAddressVersion: 65,
   wifVersion: 239,
   defaultRpcPort: 40332,
   minRelayFeePerKb: 1000,

@@ -109,6 +109,15 @@ export class Keystore {
     return keystore;
   }
 
+  static async fromSeed(seed: Uint8Array, network: string, password?: string): Promise<Keystore> {
+    const keystore = new Keystore(network);
+    keystore.walletVersion = WALLET_VERSION_2;
+    keystore.seed = seed;
+    if (password) keystore.password = password;
+    keystore.newKey("default");
+    return keystore;
+  }
+
   static async fromSecret(secret: Uint8Array, network: string, password?: string): Promise<Keystore> {
     const keystore = new Keystore(network);
     if (password) keystore.password = password;

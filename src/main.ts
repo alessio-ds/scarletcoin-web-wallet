@@ -14,6 +14,7 @@ import {
   saveWalletDocument,
 } from "./lib/storage.js";
 import { Miner, type MinerState } from "./lib/miner.js";
+import { generateMnemonic, mnemonicToSeed, validateMnemonic, MnemonicError } from "./lib/bip39.js";
 
 const app = document.getElementById("app")!;
 
@@ -102,7 +103,7 @@ function renderOnboarding(error = ""): void {
     <header class="app"><h1>ScarletCoin Wallet</h1></header>
     <div class="card">
       <h2 style="margin-top:0">Create a wallet</h2>
-      <p class="hint">Keys are generated in this browser and never leave it.</p>
+      <p class="hint">A 12-word recovery phrase will be shown &mdash; write it down.</p>
       <label>Network</label>
       <select id="create-network">
         ${Object.keys(NETWORKS).map((n) => `<option value="${n}">${n}</option>`).join("")}
@@ -110,11 +111,23 @@ function renderOnboarding(error = ""): void {
       <label>Password (optional — encrypts the keys)</label>
       <input type="password" id="create-password" autocomplete="new-password" />
       <div class="status" style="margin-top:12px"><button id="create-btn">Create</button></div>
-      <p class="hint" style="margin-top:14px">An encrypted wallet can only spend after you enter the
-      password. Without a password the keys are stored in this browser's storage unencrypted.</p>
+      <div id="create-mnemonic" class="status" style="display:none;margin-top:8px"></div>
     </div>
     <div class="card">
-      <h2 style="margin-top:0">Restore a wallet</h2>
+      <h2 style="margin-top:0">Restore from seed phrase</h2>
+      <p class="hint">Enter the 12 words you wrote down when the wallet was created.</p>
+      <label>Recovery phrase</label>
+      <textarea id="restore-words" rows="3" placeholder="abandon abandon abandon..." autocomplete="off"></textarea>
+      <label>Network</label>
+      <select id="restore-network">
+        ${Object.keys(NETWORKS).map((n) => `<option value="${n}">${n}</option>`).join("")}
+      </select>
+      <label>Password (optional)</label>
+      <input type="password" id="restore-password" autocomplete="new-password" placeholder="Optional wallet password" />
+      <div class="status" style="margin-top:12px"><button id="restore-btn">Restore</button></div>
+    </div>
+    <div class="card">
+      <h2 style="margin-top:0">Restore from a wallet file</h2>
       <label>ScarletCoin wallet file (JSON)</label>
       <input type="file" id="import-file" accept="application/json,.json" />
       <p class="hint">The same format as the desktop and command-line wallet.</p>
@@ -139,6 +152,7 @@ function renderOnboarding(error = ""): void {
   `;
 
   document.getElementById("create-btn")!.addEventListener("click", () => void createWallet());
+  document.getElementById("restore-btn")!.addEventListener("click", () => void restoreFromSeed());
   document.getElementById("import-file")!.addEventListener("change", (event) => {
     void importFile((event.target as HTMLInputElement).files?.[0]);
   });
@@ -150,11 +164,50 @@ async function createWallet(): Promise<void> {
   const password = (document.getElementById("create-password") as HTMLInputElement).value;
   network = networkValue;
   nodeUrl = getParams(network).publicNodes[0] ?? `http://127.0.0.1:${getParams(network).defaultRpcPort}`;
-  keystore = await Keystore.create(network, password || undefined);
+  const mnemonic = generateMnemonic();
+  const seed = await mnemonicToSeed(mnemonic);
+  keystore = await Keystore.fromSeed(seed, network, password || undefined);
+  keystore.newKey("second");
   await persist();
   await saveSettings({ network, nodeUrl });
+  // Show the recovery phrase in the create card.
+  const el = document.getElementById("create-mnemonic")!;
+  el.innerHTML = `
+    <p style="margin:0"><strong>Recovery phrase</strong> – write these 12 words down. Anyone who has them
+    can spend the coins. They are shown only now.</p>
+    <pre style="background:var(--bg-card);padding:8px;border-radius:4px;
+      margin:6px 0 0;white-space:pre-wrap;word-break:break-word">${escapeHtml(mnemonic)}</pre>
+  `;
+  (el as HTMLElement).style.display = "block";
   wallet = new Wallet(keystore, client());
   await renderMain();
+}
+
+async function restoreFromSeed(): Promise<void> {
+  const networkValue = (document.getElementById("restore-network") as HTMLSelectElement).value;
+  const password = (document.getElementById("restore-password") as HTMLInputElement).value;
+  const words = (document.getElementById("restore-words") as HTMLTextAreaElement).value;
+
+  const mnemonic = words.trim().replace(/\s+/g, " ");
+  if (!mnemonic) return;
+  try {
+    validateMnemonic(mnemonic);
+  } catch (error) {
+    renderOnboarding(error instanceof MnemonicError ? error.message : "invalid recovery phrase");
+    return;
+  }
+  try {
+    const seed = await mnemonicToSeed(mnemonic);
+    network = networkValue;
+    nodeUrl = getParams(network).publicNodes[0] ?? `http://127.0.0.1:${getParams(network).defaultRpcPort}`;
+    keystore = await Keystore.fromSeed(seed, network, password || undefined);
+    await persist();
+    await saveSettings({ network, nodeUrl });
+    wallet = new Wallet(keystore, client());
+    await renderMain();
+  } catch (error) {
+    renderOnboarding(`Could not restore that wallet: ${error instanceof Error ? error.message : error}`);
+  }
 }
 
 async function importFile(file: File | undefined): Promise<void> {

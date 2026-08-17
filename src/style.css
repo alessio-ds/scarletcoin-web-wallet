@@ -56,11 +56,11 @@ header.app .node { color: var(--muted); font-size: 13px; }
 
 label { display: block; color: var(--muted); font-size: 12px; text-transform: uppercase;
   letter-spacing: 0.08em; margin: 12px 0 4px; }
-input, select {
+input, select, textarea {
   background: var(--panel); border: 1px solid var(--line); color: var(--text);
   padding: 9px 11px; border-radius: 6px; font: inherit; width: 100%; max-width: 520px;
 }
-input:focus, select:focus { outline: none; border-color: var(--accent); }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
 
 button {
   background: var(--accent); border: 0; color: #fff; padding: 9px 16px; border-radius: 6px;

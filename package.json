@@ -1,0 +1,25 @@
+{
+  "name": "scarletcoin-web-wallet",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A browser wallet for ScarletCoin. Keys are generated and signed locally; the node only ever sees finished transactions.",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@noble/hashes": "^1.7.1",
+    "@noble/secp256k1": "^2.2.3",
+    "scrypt-js": "^3.0.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
+    "vitest": "^2.1.8"
+  }
+}

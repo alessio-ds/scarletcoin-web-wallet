@@ -10,6 +10,7 @@ export interface ChainParams {
   addressVersion: number;
   scriptAddressVersion: number;
   wifVersion: number;
+  bip44CoinType: number;
   defaultRpcPort: number;
   minRelayFeePerKb: number;
   publicNodes: string[];
@@ -20,6 +21,7 @@ export const MAINNET: ChainParams = {
   addressVersion: 63, // P2PKH addresses start with "S"
   scriptAddressVersion: 50, // P2SH addresses start with "M"
   wifVersion: 191,
+  bip44CoinType: 0,
   defaultRpcPort: 20332,
   minRelayFeePerKb: 1000,
   publicNodes: ["https://scarletcoin.remotewire.net"],
@@ -30,6 +32,7 @@ export const TESTNET: ChainParams = {
   addressVersion: 127, // addresses start with "t"
   scriptAddressVersion: 65, // P2SH addresses start with "T"
   wifVersion: 239,
+  bip44CoinType: 1,
   defaultRpcPort: 30332,
   minRelayFeePerKb: 1000,
   publicNodes: [],
@@ -40,6 +43,7 @@ export const REGTEST: ChainParams = {
   addressVersion: 127,
   scriptAddressVersion: 65,
   wifVersion: 239,
+  bip44CoinType: 1,
   defaultRpcPort: 40332,
   minRelayFeePerKb: 1000,
   publicNodes: [],

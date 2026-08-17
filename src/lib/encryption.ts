@@ -89,8 +89,8 @@ export async function decryptBlob(
   }
 }
 
-export function walletAssociatedData(network: string): Uint8Array {
-  return textEncoder.encode(`scarletcoin-wallet-v1:${network}`);
+export function walletAssociatedData(network: string, version = 1): Uint8Array {
+  return textEncoder.encode(`scarletcoin-wallet-v${version}:${network}`);
 }
 
 export function decodeUtf8(bytes: Uint8Array): string {

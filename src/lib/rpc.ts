@@ -99,4 +99,28 @@ export class RpcClient {
   async validateAddress(address: string): Promise<any> {
     return this.call("validateaddress", address);
   }
+
+  async getBlockTemplate(): Promise<{
+    height: number;
+    previous_block: string;
+    bits: string;
+    target: string;
+    min_time: number;
+    current_time: number;
+    coinbase_value: number;
+    version: number;
+    transactions: string[];
+    network?: string;
+  }> {
+    return this.call("getblocktemplate");
+  }
+
+  async submitBlock(rawHex: string): Promise<{
+    status: string;
+    hash: string;
+    height: number;
+    reorganised: boolean;
+  }> {
+    return this.call("submitblock", rawHex);
+  }
 }

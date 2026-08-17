@@ -1,11 +1,11 @@
 import { Wallet } from "./lib/wallet.js";
-import { Keystore, type WalletDocument } from "./lib/keystore.js";
+import { Keystore, type WalletDocument, WalletError } from "./lib/keystore.js";
 import { RpcClient } from "./lib/rpc.js";
 import { NETWORKS, getParams } from "./lib/params.js";
 import { formatAmount, parseAmount } from "./lib/units.js";
-import { isValidAddress } from "./lib/keys.js";
+import { isValidAddress, privateKeyFromWif } from "./lib/keys.js";
 import { serialize } from "./lib/transaction.js";
-import { toHex } from "./lib/util.js";
+import { toHex, reverseBytes } from "./lib/util.js";
 import {
   clearWallet,
   loadSettings,
@@ -13,11 +13,13 @@ import {
   saveSettings,
   saveWalletDocument,
 } from "./lib/storage.js";
+import { Miner, type MinerState } from "./lib/miner.js";
 
 const app = document.getElementById("app")!;
 
 let keystore: Keystore | null = null;
 let wallet: Wallet | null = null;
+let miner: Miner | null = null;
 let network = "mainnet";
 let nodeUrl = getParams("mainnet").publicNodes[0] ?? "http://127.0.0.1:20332";
 let activeTab = "send";
@@ -29,6 +31,20 @@ function escapeHtml(value: unknown): string {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+const EXPLORER_URL = "https://scarletcoin.remotewire.net";
+
+function explorerLink(kind: "tx" | "address" | "block", value: string | number): string {
+  return `${EXPLORER_URL}/${kind}/${encodeURIComponent(String(value))}`;
+}
+
+function linkHtml(href: string, label: string, className = "hash"): string {
+  return `<a class="${className}" href="${href}" target="_blank" rel="noopener">${escapeHtml(label)}</a>`;
+}
+
+function displayTxid(txidInternal: Uint8Array): string {
+  return toHex(reverseBytes(txidInternal));
 }
 
 function params() {
@@ -55,9 +71,13 @@ function renderShell(): void {
       <h1>ScarletCoin Wallet</h1>
       <span class="node" id="node-status"></span>
       <div class="spacer"></div>
+      <a class="button-link" href="${EXPLORER_URL}/" target="_blank" rel="noopener">Block explorer</a>
       <button class="secondary" id="refresh-btn">Refresh</button>
     </header>
     <div id="content"></div>
+    <footer class="app-footer">
+      <a href="https://github.com/alessio-ds/scarletcoin-web-wallet">github.com/alessio-ds/scarletcoin-web-wallet</a>
+    </footer>
   `;
   document.getElementById("refresh-btn")!.addEventListener("click", () => void refresh());
 }
@@ -99,13 +119,30 @@ function renderOnboarding(error = ""): void {
       <input type="file" id="import-file" accept="application/json,.json" />
       <p class="hint">The same format as the desktop and command-line wallet.</p>
     </div>
+    <div class="card">
+      <h2 style="margin-top:0">Import a private key</h2>
+      <p class="hint">Enter a WIF private key to create a wallet from a single key.</p>
+      <label>Network</label>
+      <select id="wif-network">
+        ${Object.keys(NETWORKS).map((n) => `<option value="${n}">${n}</option>`).join("")}
+      </select>
+      <label>Private key (WIF)</label>
+      <input type="password" id="wif-input" autocomplete="off" placeholder="Enter your WIF private key" />
+      <label>Password (optional — encrypts the key)</label>
+      <input type="password" id="wif-password" autocomplete="new-password" placeholder="Optional wallet password" />
+      <div class="status" style="margin-top:12px"><button id="import-wif-btn">Import</button></div>
+    </div>
     ${error ? `<p class="error">${escapeHtml(error)}</p>` : ""}
+    <footer class="app-footer">
+      <a href="https://github.com/alessio-ds/scarletcoin-web-wallet">github.com/alessio-ds/scarletcoin-web-wallet</a>
+    </footer>
   `;
 
   document.getElementById("create-btn")!.addEventListener("click", () => void createWallet());
   document.getElementById("import-file")!.addEventListener("change", (event) => {
     void importFile((event.target as HTMLInputElement).files?.[0]);
   });
+  document.getElementById("import-wif-btn")!.addEventListener("click", () => void importWifRestore());
 }
 
 async function createWallet(): Promise<void> {
@@ -137,6 +174,31 @@ async function importFile(file: File | undefined): Promise<void> {
   }
 }
 
+async function importWifRestore(): Promise<void> {
+  const networkValue = (document.getElementById("wif-network") as HTMLSelectElement).value;
+  const wif = (document.getElementById("wif-input") as HTMLInputElement).value.trim();
+  const password = (document.getElementById("wif-password") as HTMLInputElement).value;
+
+  if (!wif) {
+    renderOnboarding("Please enter a WIF private key.");
+    return;
+  }
+
+  try {
+    const params = getParams(networkValue);
+    const secret = privateKeyFromWif(wif, params.wifVersion);
+    network = networkValue;
+    nodeUrl = params.publicNodes[0] ?? `http://127.0.0.1:${params.defaultRpcPort}`;
+    keystore = await Keystore.fromSecret(secret, network, password || undefined);
+    await persist();
+    await saveSettings({ network, nodeUrl });
+    wallet = new Wallet(keystore, client());
+    await renderMain();
+  } catch (error) {
+    renderOnboarding(`Invalid private key: ${error instanceof Error ? error.message : error}`);
+  }
+}
+
 // ------------------------------------------------------------------ main view
 
 async function renderMain(): Promise<void> {
@@ -150,13 +212,16 @@ async function renderMain(): Promise<void> {
       <button data-tab="receive">Receive</button>
       <button data-tab="history">History</button>
       <button data-tab="coins">Coins</button>
+      <button data-tab="mine">Mine</button>
       <button data-tab="settings">Settings</button>
     </div>
     <div id="tab"></div>
   `;
-  for (const button of content.querySelectorAll<HTMLButtonElement>(".tabs button")) {
+  const tabButtons = content.querySelectorAll<HTMLButtonElement>(".tabs button");
+  for (const button of tabButtons) {
     button.addEventListener("click", () => {
       activeTab = button.dataset.tab!;
+      for (const b of tabButtons) b.classList.toggle("active", b.dataset.tab === activeTab);
       void renderTab();
     });
     if (button.dataset.tab === activeTab) button.classList.add("active");
@@ -192,6 +257,7 @@ async function renderTab(): Promise<void> {
   if (activeTab === "receive") return renderReceive(tab);
   if (activeTab === "history") return renderHistory(tab);
   if (activeTab === "coins") return renderCoins(tab);
+  if (activeTab === "mine") return renderMine(tab);
   return renderSettings(tab);
 }
 
@@ -273,7 +339,7 @@ async function doSend(): Promise<void> {
     }
     status.textContent = "broadcasting…";
     const txid = await wallet.client.sendRawTransaction(toHex(serialize(result.transaction)));
-    status.textContent = `sent: ${txid}`;
+    status.innerHTML = `sent: ${linkHtml(explorerLink("tx", txid), txid)}`;
     (document.getElementById("send-address") as HTMLInputElement).value = "";
     (document.getElementById("send-amount") as HTMLInputElement).value = "";
     await refreshSummary();
@@ -297,7 +363,7 @@ function renderReceive(tab: HTMLElement): void {
   const rows = keystore.addresses()
     .map((record) => {
       const row = `<tr>
-        <td class="mono">${escapeHtml(record.address)}</td>
+        <td class="mono">${linkHtml(explorerLink("address", record.address), record.address)}</td>
         <td>${escapeHtml(record.label || "")}</td>
         <td class="mono"><button class="secondary" data-copy="${escapeHtml(record.address)}">Copy</button></td>
       </tr>`;
@@ -353,7 +419,7 @@ async function renderHistory(tab: HTMLElement): Promise<void> {
             <td class="num">${item.height ?? "mempool"}</td>
             <td class="num ${cls}">${sign}${escapeHtml(formatAmount(net < 0n ? -net : net))}</td>
             <td class="num">${item.confirmations ?? 0}</td>
-            <td class="mono">${escapeHtml(item.txid)}</td>
+            <td class="mono">${linkHtml(explorerLink("tx", item.txid), item.txid)}</td>
           </tr>`;
         }).join("")
       : `<tr><td colspan="4" class="muted">No transactions yet.</td></tr>`;
@@ -377,13 +443,126 @@ async function renderCoins(tab: HTMLElement): Promise<void> {
       ? coins.map((coin) => `<tr>
           <td class="num amount">${escapeHtml(formatAmount(coin.value))}</td>
           <td>payment</td>
-          <td class="mono">${escapeHtml(toHex(coin.outpoint.txid))}:${coin.outpoint.index}</td>
+          <td class="mono">${linkHtml(explorerLink("tx", displayTxid(coin.outpoint.txid)), displayTxid(coin.outpoint.txid))}:${coin.outpoint.index}</td>
         </tr>`).join("")
       : `<tr><td colspan="3" class="muted">No unspent outputs.</td></tr>`;
     document.getElementById("coins-rows")!.innerHTML = rows;
   } catch (error) {
     document.getElementById("coins-rows")!.innerHTML =
       `<tr><td colspan="3" class="error">${escapeHtml(error instanceof Error ? error.message : error)}</td></tr>`;
+  }
+}
+
+// ------------------------------------------------------------------ mine
+
+function formatHashrate(hs: number): string {
+  if (hs >= 1_000_000) return `${(hs / 1_000_000).toFixed(1)} MH/s`;
+  if (hs >= 1_000) return `${(hs / 1_000).toFixed(1)} kH/s`;
+  return `${hs} H/s`;
+}
+
+function renderMine(tab: HTMLElement): void {
+  if (!keystore || !wallet) return;
+
+  const addresses = keystore.addresses();
+  const savedAddress = localStorage.getItem("scarletcoin_mine_address") ?? addresses[0]?.address ?? "";
+  const state = miner?.getState() ?? { status: "idle" as const, hashrate: 0, blocksFound: Number(localStorage.getItem("scarletcoin_blocks_found") ?? "0"), height: 0, difficulty: 0, address: savedAddress };
+
+  const isMining = state.status === "mining" || state.status === "submitting";
+
+  tab.innerHTML = `
+    <div class="card">
+      <p class="hint">Mine ScarletCoin directly from this browser. Your device computes SHA-256 hashes
+      to find the next block. Finding a block is unlikely on mainnet — think of it as a lottery.</p>
+    </div>
+    <div class="card">
+      <label>Mine to address</label>
+      <select id="mine-address">
+        ${addresses.map((a) => `<option value="${escapeHtml(a.address)}" ${a.address === state.address ? "selected" : ""}>${escapeHtml(a.address)} ${escapeHtml(a.label || "")}</option>`).join("")}
+      </select>
+      <div class="status" style="margin-top:12px">
+        <button id="mine-toggle" ${!wallet ? "disabled" : ""}>${isMining ? "Stop" : "Start"} Mining</button>
+        <span id="mine-status" class="${state.status === "error" ? "error" : "muted"}">
+          ${state.status === "mining" ? "mining…" : state.status === "submitting" ? "submitting block…" : state.status === "error" ? "error" : "idle"}
+        </span>
+      </div>
+    </div>
+    <div class="card" id="mine-stats">
+      <div class="mining-stats">
+        <div class="mining-stat">
+          <span class="mining-stat-label">Hashrate</span>
+          <span class="mining-stat-value" id="mine-hashrate">${formatHashrate(state.hashrate)}</span>
+        </div>
+        <div class="mining-stat">
+          <span class="mining-stat-label">Block Height</span>
+          <span class="mining-stat-value" id="mine-height">${state.height || "…"}</span>
+        </div>
+        <div class="mining-stat">
+          <span class="mining-stat-label">Difficulty</span>
+          <span class="mining-stat-value" id="mine-difficulty">${state.difficulty ? state.difficulty.toFixed(2) : "…"}</span>
+        </div>
+        <div class="mining-stat">
+          <span class="mining-stat-label">Blocks Found</span>
+          <span class="mining-stat-value" id="mine-found">${state.blocksFound}</span>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("mine-toggle")!.addEventListener("click", () => void toggleMining());
+}
+
+function initMiner(): Miner {
+  if (!miner) {
+    miner = new Miner(client());
+    miner.setListener(onMinerState);
+  }
+  return miner;
+}
+
+function onMinerState(state: MinerState): void {
+  const statusEl = document.getElementById("mine-status");
+  if (statusEl) {
+    if (state.status === "mining") statusEl.textContent = "mining…";
+    else if (state.status === "submitting") statusEl.textContent = "submitting block…";
+    else if (state.status === "error") statusEl.textContent = "error";
+    else statusEl.textContent = "idle";
+    statusEl.className = state.status === "error" ? "error" : "muted";
+  }
+
+  const hashEl = document.getElementById("mine-hashrate");
+  if (hashEl) hashEl.textContent = formatHashrate(state.hashrate);
+
+  const heightEl = document.getElementById("mine-height");
+  if (heightEl) heightEl.textContent = String(state.height || "…");
+
+  const diffEl = document.getElementById("mine-difficulty");
+  if (diffEl) diffEl.textContent = state.difficulty ? state.difficulty.toFixed(2) : "…";
+
+  const foundEl = document.getElementById("mine-found");
+  if (foundEl) foundEl.textContent = String(state.blocksFound);
+
+  const toggleBtn = document.getElementById("mine-toggle");
+  if (toggleBtn) {
+    const isMining = state.status === "mining" || state.status === "submitting";
+    toggleBtn.textContent = isMining ? "Stop Mining" : "Start Mining";
+  }
+}
+
+async function toggleMining(): Promise<void> {
+  if (!keystore || !wallet) return;
+  const m = initMiner();
+
+  if (m.getState().status === "idle") {
+    const address = (document.getElementById("mine-address") as HTMLSelectElement).value;
+    localStorage.setItem("scarletcoin_mine_address", address);
+    try {
+      await m.start(address, params().addressVersion);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : String(error));
+    }
+  } else {
+    m.stop();
   }
 }
 
@@ -472,9 +651,11 @@ async function setPassword(): Promise<void> {
 
 async function wipeWallet(): Promise<void> {
   if (!window.confirm("Forget this wallet from this browser? This cannot be undone.")) return;
+  if (miner) miner.stop();
   await clearWallet();
   keystore = null;
   wallet = null;
+  miner = null;
   renderOnboarding();
 }
 

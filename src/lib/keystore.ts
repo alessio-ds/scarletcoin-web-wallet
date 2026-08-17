@@ -77,6 +77,13 @@ export class Keystore {
     return keystore;
   }
 
+  static async fromSecret(secret: Uint8Array, network: string, password?: string): Promise<Keystore> {
+    const keystore = new Keystore(network);
+    if (password) keystore.password = password;
+    keystore.keyRecords.push({ secret, label: "imported", created: Math.floor(Date.now() / 1000) });
+    return keystore;
+  }
+
   static async fromDocument(document: WalletDocument, password?: string): Promise<Keystore> {
     if (document.version !== WALLET_VERSION) {
       throw new WalletError(`this is not a version ${WALLET_VERSION} ScarletCoin wallet`);

@@ -86,16 +86,13 @@ export class Miner {
 
   private async refreshTemplate(): Promise<void> {
     try {
-      const raw = await this.client.getBlockTemplate();
+      const [raw, difficulty] = await Promise.all([
+        this.client.getBlockTemplate(),
+        this.client.getDifficulty(),
+      ]);
       const template = parseBlockTemplate(raw);
       this.height = template.height;
-
-      const diff1Target = BigInt("0x00000000FFFF0000000000000000000000000000000000000000000000000000");
-      if (template.target > 0n) {
-        this.difficulty = Number((diff1Target * 100n) / template.target) / 100;
-      } else {
-        this.difficulty = 0;
-      }
+      this.difficulty = difficulty;
 
       const extraNonce = new Uint8Array(4);
       const dv = new DataView(extraNonce.buffer);

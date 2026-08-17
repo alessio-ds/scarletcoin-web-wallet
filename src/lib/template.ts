@@ -1,11 +1,11 @@
 import { fromHex, toHex } from "./util.js";
+import { serialize, txid } from "./transaction.js";
 import {
   computeTxidFromSerialized,
   computeMerkleRoot,
   serializeBlockHeader,
   serializeBlock,
   buildCoinbase,
-  serializeNode,
 } from "./transaction_node.js";
 
 export interface BlockTemplate {
@@ -56,25 +56,16 @@ export function buildCandidateBlock(
   pubkeyHash: Uint8Array,
   extraNonce: Uint8Array,
 ): CandidateBlock {
-  const coinbase = buildCoinbase(
-    template.height,
-    template.coinbaseValue,
-    pubkeyHash,
-    extraNonce,
-  );
-  const coinbaseSerialized = serializeNode(coinbase);
-  const coinbaseTxid = computeTxidFromSerialized(coinbaseSerialized);
+  const coinbase = buildCoinbase(template.height, template.coinbaseValue, pubkeyHash, extraNonce);
+  const coinbaseSerialized = serialize(coinbase);
 
-  const txids: Uint8Array[] = [coinbaseTxid];
+  const txids: Uint8Array[] = [txid(coinbase)];
   for (const tx of template.transactions) {
     txids.push(computeTxidFromSerialized(tx));
   }
 
   const merkleRoot = computeMerkleRoot(txids);
-  const timestamp = Math.max(
-    Math.floor(Date.now() / 1000),
-    template.minTime + 1,
-  );
+  const timestamp = Math.max(Math.floor(Date.now() / 1000), template.minTime + 1);
 
   const header = serializeBlockHeader(
     template.version,

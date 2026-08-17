@@ -1,67 +1,6 @@
 import { hash256 } from "./hashing.js";
 import { Writer } from "./serialize.js";
-
-const NULL_HASH = new Uint8Array(32);
-const NULL_INDEX = 0xFFFFFFFF;
-const SEQUENCE_FINAL = 0xFFFFFFFF;
-const OUTPUT_P2PKH = 0;
-
-export interface CoinbaseTxInput {
-  txid: Uint8Array;
-  index: number;
-  sequence: number;
-}
-
-export interface CoinbaseTxOutput {
-  type: number;
-  value: bigint;
-  payload: Uint8Array;
-}
-
-export interface CoinbaseTransaction {
-  version: number;
-  inputs: CoinbaseTxInput[];
-  outputs: CoinbaseTxOutput[];
-  lockTime: number;
-  coinbaseData: Uint8Array;
-}
-
-export function coinbaseInput(): CoinbaseTxInput {
-  return { txid: NULL_HASH, index: NULL_INDEX, sequence: SEQUENCE_FINAL };
-}
-
-export function p2pkhOutput(value: bigint, pubkeyHash: Uint8Array): CoinbaseTxOutput {
-  return { type: OUTPUT_P2PKH, value, payload: pubkeyHash };
-}
-
-export function serializeBodyNode(tx: CoinbaseTransaction): Uint8Array {
-  const writer = new Writer();
-  writer.uint32(tx.version);
-  writer.varint(tx.inputs.length);
-  for (const input of tx.inputs) {
-    writer.hash32(input.txid).uint32(input.index).uint32(input.sequence);
-  }
-  writer.varint(tx.outputs.length);
-  for (const output of tx.outputs) {
-    writer.uint8(output.type).uint64(output.value).raw(output.payload);
-  }
-  writer.uint32(tx.lockTime);
-  writer.varbytes(tx.coinbaseData);
-  return writer.getvalue();
-}
-
-export function serializeNode(tx: CoinbaseTransaction): Uint8Array {
-  const writer = new Writer();
-  writer.raw(serializeBodyNode(tx));
-  for (const _input of tx.inputs) {
-    writer.varint(0);
-  }
-  return writer.getvalue();
-}
-
-export function txidNode(tx: CoinbaseTransaction): Uint8Array {
-  return hash256(serializeBodyNode(tx));
-}
+import type { Transaction } from "./transaction.js";
 
 export function encodeCoinbaseData(height: number, extra: Uint8Array = new Uint8Array(0)): Uint8Array {
   const result = new Uint8Array(4 + extra.length);
@@ -76,11 +15,17 @@ export function buildCoinbase(
   reward: bigint,
   pubkeyHash: Uint8Array,
   extra: Uint8Array = new Uint8Array(0),
-): CoinbaseTransaction {
+): Transaction {
   return {
     version: 1,
-    inputs: [coinbaseInput()],
-    outputs: [p2pkhOutput(reward, pubkeyHash)],
+    inputs: [
+      {
+        prevout: { txid: new Uint8Array(32), index: 0xffffffff },
+        publicKey: new Uint8Array(0),
+        signature: new Uint8Array(0),
+      },
+    ],
+    outputs: [{ value: reward, pubkeyHash }],
     lockTime: 0,
     coinbaseData: encodeCoinbaseData(height, extra),
   };
@@ -106,10 +51,10 @@ export function computeTxidFromSerialized(serialized: Uint8Array): Uint8Array {
   let offset = 4;
   const inputCount = readVarint(serialized, offset);
   offset += inputCount.bytesRead;
-  offset += inputCount.value * 40;
+  offset += inputCount.value * 36;
   const outputCount = readVarint(serialized, offset);
   offset += outputCount.bytesRead;
-  offset += outputCount.value * 29;
+  offset += outputCount.value * 28;
   offset += 4;
   const coinbaseLen = readVarint(serialized, offset);
   offset += coinbaseLen.bytesRead;
@@ -135,10 +80,7 @@ export function serializeBlockHeader(
   return writer.getvalue();
 }
 
-export function serializeBlock(
-  header: Uint8Array,
-  transactions: Uint8Array[],
-): Uint8Array {
+export function serializeBlock(header: Uint8Array, transactions: Uint8Array[]): Uint8Array {
   const writer = new Writer();
   writer.raw(header);
   writer.varint(transactions.length);

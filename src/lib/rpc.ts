@@ -76,6 +76,10 @@ export class RpcClient {
     return this.call("getblockcount");
   }
 
+  async getDifficulty(): Promise<number> {
+    return this.call("getdifficulty");
+  }
+
   async getBalance(address: string): Promise<any> {
     return this.call("getbalance", address);
   }

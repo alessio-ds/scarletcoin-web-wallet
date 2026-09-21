@@ -85,6 +85,18 @@ This keeps the two implementations from drifting apart: addresses, WIF strings,
 transaction bodies and transaction ids must be identical, and every signature
 must verify under the node's rules.
 
+The block-building fixture used by the mining tests is generated the same way:
+
+```sh
+uv run python tools/generate_mining_fixture.py
+```
+
+`test/mining.test.ts` rebuilds that block from its template and checks the bytes
+and hash against the node, including the header timestamp. The timestamp must be
+the template's `current_time`, not the device's clock: the node retargets
+difficulty every block from the block's own timestamp, so a block stamped even
+one second off is rejected as "wrong difficulty".
+
 ## Deploying
 
 Push to `main` and GitHub Actions builds and publishes the site to GitHub Pages

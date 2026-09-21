@@ -65,7 +65,14 @@ export function buildCandidateBlock(
   }
 
   const merkleRoot = computeMerkleRoot(txids);
-  const timestamp = Math.max(Math.floor(Date.now() / 1000), template.minTime + 1);
+  // The node computes the template's `bits` from `current_time`: difficulty is
+  // retargeted per block from the work mined in a trailing window, and the
+  // required target depends on the child block's own timestamp. Building the
+  // header with any other timestamp (for example the browser's clock, which is
+  // a second ahead of the node's as soon as the template crosses an RPC round
+  // trip) makes the node recompute a different target and reject the block as
+  // "wrong difficulty". Use exactly the timestamp the template was made for.
+  const timestamp = template.currentTime;
 
   const header = serializeBlockHeader(
     template.version,

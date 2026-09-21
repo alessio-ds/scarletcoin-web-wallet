@@ -7,6 +7,7 @@ import { RpcClient } from "../src/lib/rpc.js";
 import { parsePath } from "../src/lib/bip32.js";
 import { derivePublicKey } from "../src/lib/keys.js";
 import { hash160 } from "../src/lib/hashing.js";
+import { foundBlockCount } from "../src/lib/miner.js";
 import { signatureHash, signatureHasher, type Transaction } from "../src/lib/transaction.js";
 import { COIN } from "../src/lib/params.js";
 import { fromHex, toHex } from "../src/lib/util.js";
@@ -37,6 +38,25 @@ describe("regressions against the Python wallet", () => {
     expect(estimateSize(1000, 2)).toBe(140071);
     expect(estimateSize(65535, 1)).toBe(9174942);
     expect(estimateSize(65536, 1)).toBe(9175084);
+  });
+
+  it("ignores the legacy inflated blocks-found counter", () => {
+    const store = new Map<string, string>();
+    (globalThis as any).localStorage = {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => void store.set(key, value),
+      removeItem: (key: string) => void store.delete(key),
+    };
+    // The old code counted side-branch/orphan submissions too; that value must
+    // no longer be shown.
+    store.set("scarletcoin_blocks_found", "4");
+    expect(foundBlockCount()).toBe(0);
+
+    store.set("scarletcoin_blocks_found_v2", JSON.stringify([{ height: 10, hash: "aa" }]));
+    expect(foundBlockCount()).toBe(1);
+
+    store.set("scarletcoin_blocks_found_v2", "not json");
+    expect(foundBlockCount()).toBe(0);
   });
 
   it("splits a large sweep into relay-sized transactions", () => {

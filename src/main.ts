@@ -13,7 +13,7 @@ import {
   saveSettings,
   saveWalletDocument,
 } from "./lib/storage.js";
-import { Miner, type MinerState } from "./lib/miner.js";
+import { Miner, foundBlockCount, type MinerState } from "./lib/miner.js";
 import { generateMnemonic, mnemonicToSeed, validateMnemonic, MnemonicError } from "./lib/bip39.js";
 
 const app = document.getElementById("app")!;
@@ -533,14 +533,16 @@ function renderMine(tab: HTMLElement): void {
 
   const addresses = keystore.addresses();
   const savedAddress = localStorage.getItem("scarletcoin_mine_address") ?? addresses[0]?.address ?? "";
-  const state = miner?.getState() ?? { status: "idle" as const, hashrate: 0, blocksFound: Number(localStorage.getItem("scarletcoin_blocks_found") ?? "0"), height: 0, difficulty: 0, address: savedAddress };
+  const state = miner?.getState() ?? { status: "idle" as const, hashrate: 0, blocksFound: foundBlockCount(), height: 0, difficulty: 0, address: savedAddress };
 
   const isMining = state.status === "mining" || state.status === "submitting";
 
   tab.innerHTML = `
     <div class="card">
-      <p class="hint">Mine ScarletCoin directly from this browser. Your device computes SHA-256 hashes
-      to find the next block. Finding a block is unlikely on mainnet — think of it as a lottery.</p>
+      <p class="hint">Mine ScarletCoin directly from this browser. This is <strong>solo mining</strong> against
+      the node you are connected to, not a pool: your device computes SHA-256 hashes and, when it finds a
+      block, the whole reward is paid to the address below. Finding a block is unlikely on mainnet — think
+      of it as a lottery.</p>
     </div>
     <div class="card">
       <label>Mine to address</label>
@@ -569,7 +571,7 @@ function renderMine(tab: HTMLElement): void {
           <span class="mining-stat-value" id="mine-difficulty">${state.difficulty ? state.difficulty.toFixed(2) : "…"}</span>
         </div>
         <div class="mining-stat">
-          <span class="mining-stat-label">Blocks Found</span>
+          <span class="mining-stat-label">Blocks Accepted</span>
           <span class="mining-stat-value" id="mine-found">${state.blocksFound}</span>
         </div>
       </div>

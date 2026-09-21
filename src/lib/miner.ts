@@ -27,6 +27,57 @@ const REFRESH_INTERVAL_MS = 30_000;
 /** How often the chain tip is checked so a stale template is noticed early. */
 const TIP_POLL_INTERVAL_MS = 5_000;
 
+/**
+ * Where accepted blocks are remembered.
+ *
+ * The old code kept a bare counter under ``scarletcoin_blocks_found`` and
+ * incremented it for *any* successful ``submitblock`` reply — including
+ * ``side-branch`` and ``orphan`` blocks that never entered the chain. That
+ * inflated counter is deliberately not read: only blocks the node reported as
+ * ``connected`` are recorded here, and the count is derived from this list.
+ */
+const FOUND_BLOCKS_KEY = "scarletcoin_blocks_found_v2";
+const FOUND_BLOCKS_LIMIT = 100;
+
+export interface FoundBlock {
+  height: number;
+  hash: string;
+}
+
+export function loadFoundBlocks(): FoundBlock[] {
+  try {
+    const raw = localStorage.getItem(FOUND_BLOCKS_KEY);
+    if (!raw) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (entry): entry is FoundBlock =>
+        !!entry &&
+        typeof entry === "object" &&
+        typeof (entry as FoundBlock).hash === "string" &&
+        typeof (entry as FoundBlock).height === "number",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function recordFoundBlock(block: FoundBlock): void {
+  const blocks = loadFoundBlocks();
+  // The same block can be solved twice if two workers race on one candidate.
+  if (blocks.some((entry) => entry.hash === block.hash)) return;
+  blocks.push(block);
+  try {
+    localStorage.setItem(FOUND_BLOCKS_KEY, JSON.stringify(blocks.slice(-FOUND_BLOCKS_LIMIT)));
+  } catch {
+    // Private mode or a full quota: the count is cosmetic, keep mining.
+  }
+}
+
+export function foundBlockCount(): number {
+  return loadFoundBlocks().length;
+}
+
 export class Miner {
   private worker: Worker | null = null;
   private client: RpcClient;
@@ -63,7 +114,7 @@ export class Miner {
     const decoded = decodeAddress(address, addressVersion);
     this.pubkeyHash = decoded.hash;
     this.stopped = false;
-    this.blocksFound = Number(localStorage.getItem("scarletcoin_blocks_found") ?? "0");
+    this.blocksFound = foundBlockCount();
 
     // Fetch the first template before reporting success: if the node will not
     // hand out work, the caller must hear about it rather than see a miner that
@@ -221,8 +272,8 @@ export class Miner {
       // extend the chain; only a connected block is a block we actually mined.
       connected = result.status === "connected";
       if (connected) {
-        this.blocksFound++;
-        localStorage.setItem("scarletcoin_blocks_found", String(this.blocksFound));
+        recordFoundBlock({ height: result.height, hash: result.hash });
+        this.blocksFound = foundBlockCount();
         console.log(`Block found and accepted! Hash: ${result.hash}, Height: ${result.height}`);
       } else {
         console.warn(`Block not accepted (${result.status}); fetching fresh work`);

@@ -218,7 +218,12 @@ async function importFile(file: File | undefined): Promise<void> {
     keystore = await Keystore.fromDocument(document);
     network = keystore.network;
     const saved = await loadSettings();
-    nodeUrl = saved?.nodeUrl ?? getParams(network).publicNodes[0] ?? `http://127.0.0.1:${getParams(network).defaultRpcPort}`;
+    // Only reuse a saved node when it belongs to the imported wallet's network.
+    nodeUrl =
+      saved && saved.network === network && saved.nodeUrl
+        ? saved.nodeUrl
+        : (getParams(network).publicNodes[0] ??
+          `http://127.0.0.1:${getParams(network).defaultRpcPort}`);
     await saveSettings({ network, nodeUrl });
     wallet = new Wallet(keystore, client());
     await renderMain();
@@ -377,13 +382,19 @@ async function doSend(): Promise<void> {
   const button = document.getElementById("send-btn") as HTMLButtonElement;
   button.disabled = true;
   try {
-    const result = sendAll
+    const built = sendAll
       ? await wallet.sendEverything(address, { feePerKb, broadcast: false })
-      : await wallet.send(address, amount, { feePerKb, broadcast: false });
+      : [await wallet.send(address, amount, { feePerKb, broadcast: false })];
 
-    const paid = result.transaction.outputs.reduce((s, o) => s + o.value, 0n) - result.change;
+    const paid = built.reduce(
+      (sum, result) =>
+        sum + result.transaction.outputs.reduce((s, o) => s + o.value, 0n) - result.change,
+      0n,
+    );
+    const totalFee = built.reduce((sum, result) => sum + result.fee, 0n);
+    const count = built.length > 1 ? ` in ${built.length} transactions` : "";
     const confirm = window.confirm(
-      `Pay ${formatAmount(paid)} SCT to\n${address}\n\nFee: ${formatAmount(result.fee)} SCT\n\nBroadcast this transaction?`,
+      `Pay ${formatAmount(paid)} SCT to\n${address}${count}\n\nFee: ${formatAmount(totalFee)} SCT\n\nBroadcast this transaction?`,
     );
     if (!confirm) {
       status.textContent = "cancelled";
@@ -391,8 +402,11 @@ async function doSend(): Promise<void> {
       return;
     }
     status.textContent = "broadcasting…";
-    const txid = await wallet.client.sendRawTransaction(toHex(serialize(result.transaction)));
-    status.innerHTML = `sent: ${linkHtml(explorerLink("tx", txid), txid)}`;
+    const txids: string[] = [];
+    for (const result of built) {
+      txids.push(await wallet.client.sendRawTransaction(toHex(serialize(result.transaction))));
+    }
+    status.innerHTML = `sent: ${txids.map((txid) => linkHtml(explorerLink("tx", txid), txid)).join(", ")}`;
     (document.getElementById("send-address") as HTMLInputElement).value = "";
     (document.getElementById("send-amount") as HTMLInputElement).value = "";
     await refreshSummary();
@@ -569,6 +583,10 @@ function initMiner(): Miner {
   if (!miner) {
     miner = new Miner(client());
     miner.setListener(onMinerState);
+  } else {
+    // The node may have changed in Settings; keep the miner on the same node
+    // as the rest of the wallet.
+    miner.setClient(client());
   }
   return miner;
 }
@@ -606,7 +624,8 @@ async function toggleMining(): Promise<void> {
   if (!keystore || !wallet) return;
   const m = initMiner();
 
-  if (m.getState().status === "idle") {
+  const status = m.getState().status;
+  if (status === "idle" || status === "error") {
     const address = (document.getElementById("mine-address") as HTMLSelectElement).value;
     localStorage.setItem("scarletcoin_mine_address", address);
     try {
@@ -655,14 +674,23 @@ function renderSettings(tab: HTMLElement): void {
 }
 
 async function saveConnection(): Promise<void> {
-  network = (document.getElementById("settings-network") as HTMLSelectElement).value;
-  nodeUrl = (document.getElementById("settings-node") as HTMLInputElement).value.trim();
-  await saveSettings({ network, nodeUrl });
-  if (keystore && keystore.network !== network) {
-    // A wallet belongs to one network; changing network requires reloading it.
-    keystore = await Keystore.fromDocument(await keystore.toDocument());
+  const selectedNetwork = (document.getElementById("settings-network") as HTMLSelectElement).value;
+  const selectedNode = (document.getElementById("settings-node") as HTMLInputElement).value.trim();
+  if (keystore && selectedNetwork !== keystore.network) {
+    // A wallet's keys and addresses belong to one network; it cannot simply be
+    // pointed at another. Keep the wallet's network so the node, the address
+    // validation and the signing all agree.
+    alert(
+      `This wallet belongs to ${keystore.network}. Create or import a ${selectedNetwork} wallet to use that network.`,
+    );
+    await renderTab();
+    return;
   }
+  network = selectedNetwork;
+  nodeUrl = selectedNode;
+  await saveSettings({ network, nodeUrl });
   wallet = new Wallet(keystore!, client());
+  if (miner) miner.setClient(client());
   await renderMain();
 }
 

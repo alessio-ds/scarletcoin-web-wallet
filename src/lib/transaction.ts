@@ -6,6 +6,7 @@
 import { hash256 } from "./hashing.js";
 import { Writer } from "./serialize.js";
 import { reverseBytes, toHex } from "./util.js";
+import { sha256 } from "@noble/hashes/sha256";
 
 export const MAX_MONEY = 21_000_000n * 100_000_000n;
 
@@ -106,6 +107,38 @@ export function signatureHash(
   writer.uint64(prevoutValue);
   writer.varbytes(scriptCode);
   return hash256(writer.getvalue());
+}
+
+/**
+ * A signature hasher for many inputs of one transaction.
+ *
+ * Every digest commits to the whole body, so calling :func:`signatureHash` per
+ * input re-serialises and re-hashes the body once per input — quadratic, and
+ * unusable for a sweep with thousands of coins. The body does not depend on
+ * which input is signed, so hash it once and carry the SHA-256 state forward.
+ * The digests are byte-for-byte what :func:`signatureHash` returns.
+ */
+export function signatureHasher(tx: Transaction): {
+  digest(inputIndex: number, prevoutValue: bigint, scriptCode: Uint8Array): Uint8Array;
+} {
+  const writer = new Writer();
+  writer.varbytes(SIGHASH_TAG);
+  writer.raw(serializeBody(tx));
+  const prefix = sha256.create();
+  prefix.update(writer.getvalue());
+
+  return {
+    digest(inputIndex: number, prevoutValue: bigint, scriptCode: Uint8Array): Uint8Array {
+      if (inputIndex < 0 || inputIndex >= tx.inputs.length) {
+        throw new Error(`no input at index ${inputIndex}`);
+      }
+      const inner = prefix.clone();
+      const tail = new Writer();
+      tail.uint32(inputIndex).uint64(prevoutValue).varbytes(scriptCode);
+      inner.update(tail.getvalue());
+      return sha256(inner.digest());
+    },
+  };
 }
 
 export function size(tx: Transaction): number {

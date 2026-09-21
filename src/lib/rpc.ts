@@ -17,11 +17,17 @@ export class RpcClientError extends Error {
 }
 
 export class RpcClient {
+  public readonly url: string;
+
   constructor(
-    public readonly url: string,
+    url: string,
     public readonly token: string | null = null,
     private readonly timeoutMs = 30_000,
-  ) {}
+  ) {
+    // A trailing slash would build "...//rpc", which the node's handler does
+    // not match; the Python client strips it too.
+    this.url = url.replace(/\/+$/, "");
+  }
 
   async call(method: string, ...params: unknown[]): Promise<any> {
     const payload = {

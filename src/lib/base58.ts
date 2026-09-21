@@ -13,7 +13,9 @@ const CHECKSUM_LENGTH = 4;
 
 /** bigint -> big-endian bytes, as ``int.to_bytes(n, "big")``. */
 function fromBigIntBE(value: bigint): Uint8Array {
-  if (value === 0n) return new Uint8Array([0]);
+  // Python's int.to_bytes(0, length=0, "big") is empty; the caller adds the
+  // leading zero bytes that the Base58 "1" characters stand for.
+  if (value === 0n) return new Uint8Array(0);
   const hex = value.toString(16);
   const length = hex.length % 2 ? hex.length + 1 : hex.length;
   const padded = hex.padStart(length, "0");

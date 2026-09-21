@@ -12,12 +12,17 @@ import {
   type TxInput,
   type TxOutput,
   serialize,
-  signatureHash,
+  signatureHasher,
 } from "./transaction.js";
 import { toHex } from "./util.js";
 
 export const PER_INPUT_BYTES = 140;
 export const PER_OUTPUT_BYTES = 29;
+/**
+ * Fixed overhead with single-byte counts: version, input and output counts,
+ * lock time and the empty coinbase-data field. ``estimateSize`` adds the longer
+ * count varints when there are more than 252 inputs or outputs.
+ */
 export const BASE_BYTES = 11;
 
 export interface Coin {
@@ -41,8 +46,22 @@ export interface BuiltTransaction {
 
 export class InsufficientFundsError extends Error {}
 
+/** Number of bytes ``Writer.varint`` emits for ``value``. */
+function varintSize(value: number): number {
+  if (value < 0xfd) return 1;
+  if (value <= 0xffff) return 3;
+  if (value <= 0xffffffff) return 5;
+  return 9;
+}
+
 export function estimateSize(inputCount: number, outputCount: number): number {
-  return BASE_BYTES + inputCount * PER_INPUT_BYTES + outputCount * PER_OUTPUT_BYTES;
+  return (
+    BASE_BYTES +
+    (varintSize(inputCount) - 1) +
+    (varintSize(outputCount) - 1) +
+    inputCount * PER_INPUT_BYTES +
+    outputCount * PER_OUTPUT_BYTES
+  );
 }
 
 export function feeForSize(size: number, feePerKb: bigint): bigint {
@@ -106,10 +125,13 @@ function signInputs(
   coins: Coin[],
   keys: Map<string, Uint8Array>,
 ): Transaction {
+  // Hash the body once and carry the state forward: signing an input per call
+  // would be quadratic in the number of inputs (see signatureHasher).
+  const hasher = signatureHasher(unsigned);
   const inputs = unsigned.inputs.map((input, index) => {
     const coin = coins[index]!;
     const key = findKey(keys, coin.pubkeyHash);
-    const digest = signatureHash(unsigned, index, coin.value, p2pkhScriptCode(coin.pubkeyHash));
+    const digest = hasher.digest(index, coin.value, p2pkhScriptCode(coin.pubkeyHash));
     return {
       prevout: input.prevout,
       sequence: input.sequence,
@@ -153,6 +175,52 @@ export function buildSweepTransaction(params: {
     totalInput: total,
     coins: spendableCoins,
   };
+}
+
+/**
+ * Largest number of inputs whose one-output transaction fits in ``byteBudget``.
+ */
+function maxInputsForBudget(byteBudget: number): number {
+  if (byteBudget <= 0) return 0;
+  let low = 0;
+  let high = Math.floor(byteBudget / PER_INPUT_BYTES) + 1;
+  while (low < high) {
+    const mid = Math.floor((low + high + 1) / 2);
+    if (estimateSize(mid, 1) <= byteBudget) low = mid;
+    else high = mid - 1;
+  }
+  return low;
+}
+
+/**
+ * Sweep every coin to one destination, splitting into relay-sized chunks.
+ *
+ * A node refuses to relay a transaction larger than half a block, so a wallet
+ * with many unspent outputs (a miner, for example) cannot sweep them in one
+ * transaction. The coins are split into the largest groups that each fit under
+ * that limit, and one signed, no-change transaction is returned per group.
+ */
+export function buildSweepTransactions(params: {
+  spendableCoins: Coin[];
+  keys: Map<string, Uint8Array>;
+  destination: Uint8Array;
+  feePerKb: bigint;
+  maxBlockSize: number;
+  lockTime?: number;
+}): BuiltTransaction[] {
+  const { spendableCoins, maxBlockSize, ...rest } = params;
+  if (spendableCoins.length === 0) throw new InsufficientFundsError("there are no coins to spend");
+  const perTransaction = Math.max(1, maxInputsForBudget(Math.floor(maxBlockSize / 2)));
+  const built: BuiltTransaction[] = [];
+  for (let start = 0; start < spendableCoins.length; start += perTransaction) {
+    built.push(
+      buildSweepTransaction({
+        ...rest,
+        spendableCoins: spendableCoins.slice(start, start + perTransaction),
+      }),
+    );
+  }
+  return built;
 }
 
 export function buildTransaction(params: {

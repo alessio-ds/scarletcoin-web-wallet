@@ -141,7 +141,9 @@ export class Keystore {
       address: String(item.address),
       label: String(item.label ?? ""),
       created: Number(item.created ?? 0),
-      path: item.path !== undefined ? String(item.path) : undefined,
+      // The Python wallet writes `"path": null` for imported addresses; `null`
+      // (and a missing field) both mean "not derived from the seed".
+      path: item.path === undefined || item.path === null ? undefined : String(item.path),
     }));
     if (document.encrypted) {
       if (!document.crypto || typeof document.crypto !== "object") {
@@ -151,7 +153,10 @@ export class Keystore {
       if (password !== undefined) await keystore.unlock(password);
     } else {
       if (document.version === WALLET_VERSION_2) {
-        keystore.seed = keystore.decodeSeed(document.seed);
+        keystore.seed =
+          document.seed === undefined || document.seed === null
+            ? null
+            : keystore.decodeSeed(document.seed);
         keystore.importedKeys = keystore.decodeKeys(document.imported ?? []);
       } else {
         keystore.importedKeys = keystore.decodeKeys(document.keys ?? []);
@@ -164,16 +169,28 @@ export class Keystore {
 
   async unlock(password: string): Promise<void> {
     if (this.envelope === null) return;
-    let plaintext: Uint8Array;
-    try {
-      plaintext = await decryptBlob(
-        password,
-        this.envelope,
-        walletAssociatedData(this.network, this.walletVersion),
-      );
-    } catch (error) {
-      if (error instanceof DecryptionError) throw new WalletError(error.message);
-      throw error;
+    // The Python wallet always seals with the current wallet version's
+    // associated data (v2), even when reading an old version-1 file. Try that
+    // first so a file written by the desktop wallet opens here, then fall back
+    // to the v1 tag for envelopes this wallet itself wrote before it matched
+    // the Python behaviour.
+    let plaintext: Uint8Array | null = null;
+    let lastError: unknown = null;
+    for (const version of [WALLET_VERSION_2, WALLET_VERSION_1]) {
+      try {
+        plaintext = await decryptBlob(
+          password,
+          this.envelope,
+          walletAssociatedData(this.network, version),
+        );
+        break;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (plaintext === null) {
+      if (lastError instanceof DecryptionError) throw new WalletError(lastError.message);
+      throw lastError;
     }
     let payload: unknown;
     try {
@@ -186,9 +203,11 @@ export class Keystore {
       this.seed = null;
       this.importedKeys = this.decodeKeys(payload);
     } else if (payload && typeof payload === "object") {
-      // Version 2: { seed, imported }.
+      // Version 2: { seed, imported }. A version-2 document may have no seed at
+      // all: the Python wallet upgrades a legacy key-list wallet to version 2
+      // and stores only imported keys.
       const entry = payload as { seed?: unknown; imported?: unknown };
-      this.seed = this.decodeSeed(entry.seed);
+      this.seed = entry.seed === undefined || entry.seed === null ? null : this.decodeSeed(entry.seed);
       this.importedKeys = this.decodeKeys(entry.imported ?? []);
     } else {
       throw new WalletError("the wallet's key list is malformed");
@@ -198,6 +217,7 @@ export class Keystore {
 
   lock(): void {
     if (this.encrypted) {
+      this.seed = null;
       this.importedKeys = [];
       this.password = null;
     }
@@ -247,8 +267,11 @@ export class Keystore {
     } else if (this.password !== null) {
       document.crypto = await encryptBlob(
         this.password,
-        encodeUtf8(JSON.stringify(imported)),
-        walletAssociatedData(this.network, WALLET_VERSION_1),
+        // A dict, not a bare list, so the Python wallet (which expects
+        // {"imported": [...]}) can open a version-1 file too; sealed with the
+        // v2 tag it always uses.
+        encodeUtf8(JSON.stringify({ imported })),
+        walletAssociatedData(this.network, WALLET_VERSION_2),
       );
       this.envelope = document.crypto;
     } else {

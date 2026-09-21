@@ -5,7 +5,7 @@
  */
 import {
   InsufficientFundsError,
-  buildSweepTransaction,
+  buildSweepTransactions,
   buildTransaction,
   type BuiltTransaction,
   type Coin,
@@ -139,19 +139,27 @@ export class Wallet {
   async sendEverything(
     destination: string,
     options: { feePerKb?: bigint; broadcast?: boolean } = {},
-  ): Promise<SendResult> {
+  ): Promise<SendResult[]> {
     const feePerKb = options.feePerKb ?? this.defaultFeeRate();
     const broadcast = options.broadcast ?? true;
     const targetHash = this.parseDestination(destination);
     const coins = await this.coins();
     if (coins.length === 0) throw new InsufficientFundsError("this wallet has no spendable coins");
-    const built = buildSweepTransaction({
+    // A wallet with many outputs (a miner, for instance) cannot sweep them in a
+    // single transaction: the node will not relay a transaction larger than
+    // half a block, so the sweep is split into relay-sized chunks.
+    const built = buildSweepTransactions({
       spendableCoins: coins,
       keys: this.keystore.keysByHash(),
       destination: targetHash,
       feePerKb,
+      maxBlockSize: this.keystore.params.maxBlockSize,
     });
-    return this.finish(built, broadcast);
+    const results: SendResult[] = [];
+    for (const transaction of built) {
+      results.push(await this.finish(transaction, broadcast));
+    }
+    return results;
   }
 
   private async finish(built: BuiltTransaction, broadcast: boolean): Promise<SendResult> {

@@ -20,27 +20,23 @@ export function formatAmount(scar: bigint, symbol = false): string {
 }
 
 export function parseAmount(text: string): bigint {
-  let cleaned = text.trim().replace(/SCT$/i, "").trim();
+  // The suffix is matched case-sensitively, as the Python wallet does.
+  const cleaned = text.trim().replace(/SCT$/, "").trim();
   if (!cleaned) throw new Error("no amount given");
-  let sign = 1n;
-  if (cleaned.startsWith("-")) {
-    sign = -1n;
-    cleaned = cleaned.slice(1);
-  }
-  if (cleaned.split(".").length > 2) throw new Error(`${text} is not a valid amount`);
-  const [wholePart, fractionPart] = cleaned.split(".");
-  const whole = wholePart ?? "";
-  const fraction = fractionPart ?? "";
-  if (whole === "" && fraction === "") throw new Error(`${text} is not a valid amount`);
-  if (!/^\d*$/.test(whole) || !/^\d*$/.test(fraction)) {
+  // Accept the shapes Python's Decimal does: an optional sign, digits (with the
+  // separators Decimal allows) and an optional decimal point.
+  if (!/^[+-]?(\d[\d_]*(\.\d*)?|\.\d+)$/.test(cleaned)) {
     throw new Error(`${text} is not a valid amount`);
   }
-  if (fraction.length > PLACES) {
+  const body = cleaned.replace(/^[+-]/, "").replace(/_/g, "");
+  const [wholePart = "", fractionPart = ""] = body.split(".");
+  // Trailing zeros do not count as decimal places: "1.000000000" is 1 SCT.
+  if (fractionPart.replace(/0+$/, "").length > PLACES) {
     throw new Error(`${text} has more than ${PLACES} decimal places`);
   }
-  const wholeValue = BigInt(whole || "0");
-  const fractionValue = BigInt((fraction + "0".repeat(PLACES - fraction.length)) || "0");
-  const scar = sign * (wholeValue * COIN + fractionValue);
+  const fraction = (fractionPart + "0".repeat(PLACES)).slice(0, PLACES);
+  const magnitude = BigInt(wholePart || "0") * COIN + BigInt(fraction || "0");
+  const scar = cleaned.startsWith("-") ? -magnitude : magnitude;
   if (scar < 0n) throw new Error("amounts must not be negative");
   if (scar > MAX_MONEY) throw new Error("amount exceeds the maximum money supply");
   return scar;

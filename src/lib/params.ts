@@ -13,6 +13,8 @@ export interface ChainParams {
   bip44CoinType: number;
   defaultRpcPort: number;
   minRelayFeePerKb: number;
+  /** Largest block the network accepts, used to split oversized sweeps. */
+  maxBlockSize: number;
   publicNodes: string[];
 }
 
@@ -24,6 +26,7 @@ export const MAINNET: ChainParams = {
   bip44CoinType: 0,
   defaultRpcPort: 20332,
   minRelayFeePerKb: 1000,
+  maxBlockSize: 1_000_000,
   publicNodes: ["https://scarletcoin.remotewire.net"],
 };
 
@@ -35,6 +38,7 @@ export const TESTNET: ChainParams = {
   bip44CoinType: 1,
   defaultRpcPort: 30332,
   minRelayFeePerKb: 1000,
+  maxBlockSize: 1_000_000,
   publicNodes: [],
 };
 
@@ -46,6 +50,7 @@ export const REGTEST: ChainParams = {
   bip44CoinType: 1,
   defaultRpcPort: 40332,
   minRelayFeePerKb: 1000,
+  maxBlockSize: 1_000_000,
   publicNodes: [],
 };
 

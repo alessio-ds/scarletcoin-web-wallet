@@ -67,19 +67,24 @@ export function deriveChild(
 }
 
 export function parsePath(path: string): number[] {
-  const parts = path.split("/");
+  const parts = path.trim().split("/");
   if (parts[0] !== "m" && parts[0] !== "M") {
     throw new Error(`path must start with "m" or "M", got ${JSON.stringify(path)}`);
   }
-  return parts.slice(1).map((part) => {
-    const hardened = part.endsWith("'") || part.endsWith("h") || part.endsWith("H");
-    const digits = hardened ? part.slice(0, -1) : part;
-    const value = Number.parseInt(digits, 10);
-    if (!Number.isInteger(value) || value < 0 || digits === "") {
-      throw new Error(`bad derivation path component ${JSON.stringify(part)}`);
-    }
-    return hardened ? value + HARDENED : value;
-  });
+  // Empty components are skipped, as in the Python wallet ("m/" is the master
+  // key, "m//0" is child 0).
+  return parts
+    .slice(1)
+    .filter((part) => part.length > 0)
+    .map((part) => {
+      const hardened = part.endsWith("'") || part.endsWith("h") || part.endsWith("H");
+      const digits = hardened ? part.slice(0, -1) : part;
+      const value = Number.parseInt(digits, 10);
+      if (!Number.isInteger(value) || value < 0 || digits === "") {
+        throw new Error(`bad derivation path component ${JSON.stringify(part)}`);
+      }
+      return hardened ? value + HARDENED : value;
+    });
 }
 
 export function deriveFromSeed(seed: Uint8Array, path: string): Uint8Array {
